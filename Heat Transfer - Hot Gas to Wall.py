@@ -76,7 +76,7 @@ def Run_Heat_Transfer(T_wall0, T_free_stream0, M_0, P_0, A, dAdx, epselon):
         #Here we use a fourth-order Runge-Kutta algorithm to calculate N, P, and T based on each other and the other variables
         N = rk4(f_N, x, N[0], N, P, T_free_stream, A, dQdx, dFdx, dAdx, T_star) #(Dimensionless)
         P = rk4(f_P, x, P[0], N, P, T_free_stream, A, dQdx, dFdx, dAdx, T_star)
-        T_free_stream = rk4(f_T, x, T[0], N, P, T_free_stream, A, dQdx, dFdx, dAdx, T_star)
+        T_free_stream = rk4(f_T, x, T_free_stream[0], N, P, T_free_stream, A, dQdx, dFdx, dAdx, T_star)
 
         #Now we use those terms to calculate flow properties
         T_star = calc_T_star(T_free_stream, N, T_wall)
@@ -85,12 +85,12 @@ def Run_Heat_Transfer(T_wall0, T_free_stream0, M_0, P_0, A, dAdx, epselon):
         gamma = cp/cv
         viscosity, thermal_conductivity = calc_viscosity_and_lambda(T_star)
         Pr = (cp*viscosity)/thermal_conductivity
-        c = np.sqrt(gamma*Rs*T)
+        c = np.sqrt(gamma*Rs*T_free_stream)
         f = calc_f(epselon, A, density, N, viscosity, c)
         #etc, etc, whatever we need here (i.e. density, Re, f, and everything needed for hg)
         T_stag, T_aw = calc_Taw(T_free_stream, N, Pr, gamma)
         hg = calc_hg(viscosity, cp, c_star, A, Pr, T_wall, T_stag, P, N, gamma)
-        q = hg*A*(Taw-Thw)
+        q = hg*A*(T_aw-T_wall)
         #Get ready to calculate dQdx and dFdx here
         dQdx = q*A/m_dot
         dFdx = calc_dFdx(f, N, T_free_stream, A, gamma)
