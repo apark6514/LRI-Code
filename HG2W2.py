@@ -53,7 +53,7 @@ class Engine:
     self.area = 2*np.pi*self.radius*self.dx #(m^2)
     self.dAdx = np.gradient(self.area, self.dx) #(m^2/m)
     self.D_t = np.min(self.radius)*2 #Throat diameter (m)
-    self.A_t = np.min(self.area) #Throat area (m)
+    self.A_t = np.min(np.pi*(self.radius**2)) #Throat area (m)
     self.cp = self.calc_cp(self.calc_T_star(self.T_free_stream0, self.M_0**2, self.T_wall0))
     self.gamma = self.cp/(self.cp-Rs)
     self.c = np.sqrt(self.gamma*Rs*self.T_free_stream0)
@@ -68,7 +68,7 @@ class Engine:
     T_free_stream = np.zeros(len(self.x)) + self.T_free_stream0 #Temperature of the free stream of gas(K)
     N = np.zeros(len(self.x)) + (self.M_0**2) #Initializing static N based on initial guess at injector (Unitless)
     P = np.zeros(len(self.x)) + self.P_0 #Initial pressure guess for the rk4 algorithm (Pa)
-    T_star = self.calc_T_star(T_free_stream, N, T_wall) #Reference temperature for calculating transport properties
+    T_star = self.calc_T_star(T_free_stream, N, T_wall) #Reference temperature for calculating transport properties (Raleigh)
     #cp = self.calc_cp(T_star)
     #gamma = cp/(cp-Rs)
     #Defining these terms for the error function later on. They will be updated and modified in the error function
@@ -154,6 +154,13 @@ class Engine:
     #Reference temperature for finding flow properties based on T_free_stream, T_wall, and mach number
     T_star = (T_free_stream*(1+(0.032*N) + 0.58*((T_wall/T_free_stream)-1)))
     return np.array(T_star)
+  def calc_T_star(self, T_free_stream, N, gamma=1.4):
+    '''Return T/T* for Rayleigh flow'''
+    return (
+        mach**2 * (1 + gamma)**2 / 
+        (1 + gamma*mach**2)**2
+        )
+
 
   def rk4(self, f, x, y0, N, P, T, A, dQdx, dFdx, dAdx):
     #4th-order Runge-Kutta method
