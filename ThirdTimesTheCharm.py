@@ -44,7 +44,7 @@ class Engine:
     self.radius = geometry[1] #m
     self.Rc_t = geometry[2] #m
     self.x -= self.x[0]
-    self.T_wall0, self.T_free_stream0, self.P_0, self.M_0 = conditions_initial
+    self.T_wall0, self.T_e0, self.P_0, self.M_0 = conditions_initial
     self.epsilon, self.c_star, self.m_dot = flow_props
     self.mass_frac_CO2, self.mass_frac_H2O, self.mass_frac_O2, self.mol_frac_CO2, self.mol_frac_H2O, self.mol_frac_O2 = chem_props
     self.dx = self.x[1]-self.x[0] #(m)
@@ -52,29 +52,33 @@ class Engine:
     self.dAdx = np.gradient(self.area, self.dx) #(m^2/m)
     self.D_t = np.min(self.radius)*2 #Throat diameter (m)
     self.A_t = np.min(np.pi*(self.radius**2)) #Throat area (m)
-    self.cp = self.calc_cp(self.calc_T_star(self.T_free_stream0, self.M_0**2, self.T_wall0))
+    self.cp = self.calc_cp(self.calc_T_star(self.T_e0, self.M_0**2, self.T_wall0))
     self.gamma = self.cp/(self.cp-Rs)
-    self.c = np.sqrt(self.gamma*Rs*self.T_free_stream0)
-    plt.plot(self.x, self.area, 'r')
-    plt.show()
-    plt.plot(self.x, self.dAdx, 'b')
-    plt.show()
-    #print(self.calc_T_star(self.T_free_stream0, M0**2, T_wall0), self.cp, self.gamma)
+    self.c = np.sqrt(self.gamma*Rs*self.T_e0)
 
   #We cannot assume N=1 exactly at throat because it breaks the diff. eq because there is (N-1) term in denominator
   def Run_Heat_Transfer(self):
     #initializing variables
-    dQdx = np.zeros(len(self.x)) #Derivative of heat with respect to length (J/m)
-    dFdx = np.zeros(len(self.x)) #Derivative of energy lost to friction with respect to length (J/m)
     T_wall = np.zeros(len(self.x)) + self.T_wall0 #Does not change unless there is a time change. Everything else should iteratively converge (K)
-    T_free_stream = np.zeros(len(self.x)) + self.T_free_stream0 #Temperature of the free stream of gas(K)
+    q = np.zeros(len(self.x))
+    T_e = np.zeros(len(self.x)) + self.T_e0 #Temperature of the free stream of gas(K)
     N = np.zeros(len(self.x)) + (self.M_0**2) #Initializing static N based on initial guess at injector (Unitless)
     P = np.zeros(len(self.x)) + self.P_0 #Initial pressure guess for the rk4 algorithm (Pa)
-    T_star = self.calc_T_star(T_free_stream, N, T_wall) #Reference temperature for calculating transport properties (Raleigh)
-    #cp = self.calc_cp(T_star)
-    #gamma = cp/(cp-Rs)
+    T_star = self.calc_T_star(T_e, N, T_wall) #Reference temperature for calculating transport properties
+    
+    viscosity, thermal_conductivity = self.calc_viscosity_and_lambda(T_star)
+
+    T_s = T_e*(1+((self.gamma-1)/2)*N)
+    dTsdx = np.gradient(T_s, self.dx)
+    P_s = P*(1+((self.gamma-1)/2)*N)**(self.gamma/(self.gamma-1))
+
+    u = np.zeros(len(x)) + np.sqrt(N*self.gamma*Rs*T_e)
+    density = np.zeros(len(x)) + P/(Rs*T_e)
+    Re = density*u*x/viscosity
+    Re[0] = 0.1
+    Cf = 0.0576/(Re**0.2)
     #Defining these terms for the error function later on. They will be updated and modified in the error function
-    T_free_stream_last = np.array([T_free_stream, T_free_stream, T_free_stream])
+    T_e_last = np.array([T_e, T_e, T_e])
     T_wall_last = np.array([T_wall, T_wall, T_wall])
     q_last = np.array([np.zeros(len(self.x)),np.zeros(len(self.x)),np.zeros(len(self.x))])
     hg_last = np.array([np.zeros(len(self.x)),np.zeros(len(self.x)),np.zeros(len(self.x))])
@@ -86,53 +90,55 @@ class Engine:
     plt.ion()  # Turn on interactive mode
     fig, ax = plt.subplots()
     line, = ax.plot([], [], 'b-', label="Live Data")  # Initialize an empty line
-    ax.set_xlim(0, 1)  # Adjust as needed
+    ax.set_xlim(0, 200)  # Adjust as needed
     ax.set_ylim(0, 150000)  # Adjust as needed
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Heat Flux Residual")
     ax.legend()
     count = 0
     #Running loop. This will end when our percent error is "good enough" or, as defined currently, after 200 iterations
-    for i in range(1):
-      #Here we use a fourth-order Runge-Kutta algorithm to calculate N, P, and T based on each other and the other variables
-      N = np.array(self.rk4(self.f_N, self.x, N[0], N, P, T_free_stream, self.area, dQdx, dFdx, self.dAdx)) #(Dimensionless)
-      P = np.array(self.rk4(self.f_P, self.x, P[0], N, P, T_free_stream, self.area, dQdx, dFdx, self.dAdx))
-      T_free_stream = np.array(self.rk4(self.f_T, self.x, T_free_stream[0], N, P, T_free_stream, self.area, dQdx, dFdx, self.dAdx))
 
-      p_stag = P*(1+((self.gamma-1)/2)*N)**(self.gamma/(self.gamma-1))
-      #Now we use those terms to calculate flow properties
-      T_star = self.calc_T_star(T_free_stream, N, T_wall)
-
-      viscosity, thermal_conductivity = self.calc_viscosity_and_lambda(T_free_stream)#T_star)
-      Pr = (self.cp*viscosity)/thermal_conductivity
-      T_stag = T_free_stream*(1+((self.gamma-1)/2)*N)
-      T_aw = T_stag*((1+(Pr**0.33)*((self.gamma-1)/2)*N)/(1+((self.gamma-1)/2)*N))
+    for i in range(2):
       
-      density = P/(Rs*T_free_stream) #Derived from ideal gas law
-      #m_dot = np.average((density/(self.area*self.dx))*(np.sqrt(N)*c))
-      f = self.calc_f(self.epsilon, self.area, density, N, viscosity)
-      #etc, etc, whatever we need here (i.e. density, Re, f, and everything needed for hg)
+      #Thermodynamic Properties
+      #We're using a 4th order Runge-Kutta algorithm to evaluate the partial differential equations for velocity (u), density, N, stagnation pressure, and free stream temperature
+      u = np.array(self.rk4(self.f_u, u[0], u, density, N, T_s, Cf, dTsdx))
+      density = np.array(self.rk4(self.f_density, density[0], u, density, N, T_s, Cf, dTsdx))
+      N = np.array(self.rk4(self.f_N, N[0], u, density, N, T_s, Cf, dTsdx))
+      P_s = np.array(self.rk4(self.f_Ps, P[0], u, density, N, T_s, Cf, dTsdx))
+      T_e = np.array(self.rk4(self.f_T, T_e[0], u, density, N, T_s, Cf, dTsdx))
 
-      hg = self.calc_hg(viscosity, Pr, T_wall, T_stag, p_stag, N)
-      q = hg*(2*np.pi*self.radius)*(T_aw-T_wall)
-      #Get ready to calculate dQdx and dFdx here
-      dQdx = q*(2*np.pi*self.radius*self.dx)/self.m_dot
-      dFdx = self.calc_dFdx(f, N, T_free_stream, self.area)
-      #End of recursion calculation. Below is error calculation for end condition
-      T_free_stream_diff = np.average([np.abs(T_free_stream-T_free_stream_last[0]), np.abs(T_free_stream-T_free_stream_last[1]), np.abs(T_free_stream-T_free_stream_last[2])])
+      #Flow properties
+      T_star = self.calc_T_star(T_e, N, T_wall)
+      viscosity, thermal_conductivity = self.calc_viscosity_and_lambda(T_star)
+      Pr = (self.cp*viscosity)/thermal_conductivity
+      T_aw = T_s*((1+(Pr**0.33)*((self.gamma-1)/2)*N)/(1+((self.gamma-1)/2)*N))
+
+      #Heat transfer
+      hg = self.calc_hg(viscosity, Pr, T_wall, T_s, P_s, N)
+      q = -hg*(2*np.pi*self.radius)*(T_aw-T_wall)
+      dqdx = np.gradient(q, self.dx)
+
+      #Update stagnation temperature
+      T_s = np.array(self.rk4(self.f_Ts, T_s[0], u, density, N, T_s, Cf, dqdx)) #(Dimensionless)
+      dTsdx = np.gradient(T_s, self.dx)
+
+      #Residuals
+      T_e_diff = np.average([np.abs(T_e-T_e_last[0]), np.abs(T_e-T_e_last[1]), np.abs(T_e-T_e_last[2])])
       T_wall_diff = np.average([np.abs(T_wall-T_wall_last[0]), np.abs(T_wall-T_wall_last[1]), np.abs(T_wall-T_wall_last[2])])
       q_diff = np.average([np.abs(q-q_last[0]), np.abs(q-q_last[1]), np.abs(q-q_last[2])])
       hg_diff = np.average([np.abs(hg-hg_last[0]), np.abs(hg-hg_last[1]), np.abs(hg-hg_last[2])])
       N_diff = np.average([np.abs(N-N_last[0]), np.abs(N-N_last[1]), np.abs(N-N_last[2])])
       P_diff = np.average([np.abs(P-P_last[0]), np.abs(P-P_last[1]), np.abs(P-P_last[2])])
 
-      T_free_stream_last = [T_free_stream_last[1], T_free_stream_last[2], T_free_stream]
+      T_e_last = [T_e_last[1], T_e_last[2], T_e]
       T_wall_last = [T_wall_last[1], T_wall_last[2], T_wall]
       q_last = [q_last[1], q_last[2], q]
       hg_last = [hg_last[1], hg_last[2], hg]
       N_last = [N_last[1], N_last[2], N]
       P_last = [P_last[1], P_last[2], P]
 
+      #Plotting
       q_diff_plot.append(q_diff) #Updating plot
       line.set_xdata(range(len(q_diff_plot)))  # Update x-axis with the indices
       line.set_ydata(q_diff_plot)  # Update y-axis with the data
@@ -144,37 +150,21 @@ class Engine:
       # Redraw the plot
       fig.canvas.draw()
       fig.canvas.flush_events()
-      count += 1
-      print(count)
-      #time.sleep(0.2)  # Pause to simulate computation time
-    #We could make it return other things here if desired. We could also create a table of values and export to PDF
-    
     plt.ioff()  # Turn off interactive mode
     plt.show()  # Keep the plot open after the loop ends
-    return np.sqrt(N), viscosity, thermal_conductivity, T_free_stream, P, q, hg, T_star, dFdx, f
-
-
-  def calc_T_star(self, T_free_stream, N, T_wall):
-    #Reference temperature for finding flow properties based on T_free_stream, T_wall, and mach number
-    T_star = (T_free_stream*(1+(0.032*N) + 0.58*((T_wall/T_free_stream)-1)))
-    return np.array(T_star)
-  """
-  def calc_T_star(self, T_free_stream, N, gamma=1.4):
-    '''Return T/T* for Rayleigh flow'''
-    return (
-        mach**2 * (1 + gamma)**2 / 
-        (1 + gamma*mach**2)**2
-        )
-  """
-  
-
-
-  def rk4(self, f, x, y0, N, P, T, A, dQdx, dFdx, dAdx):
-    #4th-order Runge-Kutta method
-    #Input your function (f_N, f_P, or f_T), x array, initial value (@ x=0), N array (if possible), P, T, Area, dQdx, dFdx, dAdx, and reference temp
-    #Outputs either N(x), P(x), or T(x) depending on input function f
     
-    n = len(x) #length of array
+    return np.sqrt(N), T_s, P_s, T_e, hg, q, self.dAdx, dTsdx, viscosity, thermal_conductivity
+
+
+  def calc_T_star(self, T_e, N, T_wall):
+    #Reference temperature for finding flow properties based on T_e, T_wall, and mach number
+    T_star = (T_e*(1+(0.032*N) + 0.58*((T_wall/T_e)-1)))
+    return np.array(T_star)
+
+  
+  def rk4(self, f, y0, u, density, N, T_s, Cf, dTsdx):
+    x = self.x
+    n = len(x)
     y_list = []
     for i in range(n):
       h = (x[n-1])/n #even step size
@@ -182,66 +172,91 @@ class Engine:
       x1 = x[i]
       x2 = x[i]+h/2 #x2=x3 so just repeat it
       x4 = x[i]+h
+      
+      u1 = u[i]
+      u2 = np.interp(x2, x, u)
+      u4 = np.interp(x4, x, u)
+
+      d1 = density[i]
+      d2 = np.interp(x2, x, density)
+      d4 = np.interp(x4, x, density)
 
       N1 = N[i]
       N2 = np.interp(x2, x, N)
       N4 = np.interp(x4, x, N)
 
-      P1 = P[i]
-      P2 = np.interp(x2, x, P)
-      P4 = np.interp(x4, x, P)
+      T_s1 = T_s[i]
+      T_s2 = np.interp(x2, x, T_s)
+      T_s4 = np.interp(x4, x, T_s)
 
-      T1 = T[i]
-      T2 = np.interp(x2, x, T)
-      T4 = np.interp(x4, x, T)
+      Cf1 = Cf[i]
+      Cf2 = np.interp(x2, x, Cf)
+      Cf4 = np.interp(x4, x, Cf)
 
-      A1 = A[i]
-      A2 = np.interp(x2, x, A)
-      A4 = np.interp(x4, x, A)
-
-      dQdx1 = dQdx[i]
-      dQdx2 = np.interp(x2, x, dQdx)
-      dQdx4 = np.interp(x4, x, dQdx)
-
-      dFdx1 = dFdx[i]
-      dFdx2 = np.interp(x2, x, dFdx)
-      dFdx4 = np.interp(x4, x, dFdx)
+      A1 = self.area[i]
+      A2 = np.interp(x2, x, self.area)
+      A4 = np.interp(x4, x, self.area)
       
-      dAdx1 = dAdx[i]
-      dAdx2 = np.interp(x2, x, dAdx)
-      dAdx4 = np.interp(x4, x, dAdx)
+      dAdx1 = self.dAdx[i]
+      dAdx2 = np.interp(x2, x, self.dAdx)
+      dAdx4 = np.interp(x4, x, self.dAdx)
 
-      k1 = h * (f(x1, y0, N1, P1, T1, A1, dQdx1, dFdx1, dAdx1))
-      k2 = h * (f(x2, (y0+k1/2), N1, P2, T2, A2, dQdx2, dFdx2, dAdx2))
-      k3 = h * (f(x2, (y0+k2/2), N2, P2, T2, A2, dQdx2, dFdx2, dAdx2))
-      k4 = h * (f(x4, (y0+k3), N4, P4, T4, A4, dQdx4, dFdx4, dAdx4))
+      dTsdx1 = dTsdx[i]
+      dTsdx2 = np.interp(x2, x, dTsdx)
+      dTsdx4 = np.interp(x4, x, dTsdx)
+
+      k1 = h * (f(x1, y0, u1, d1, N1, T_s1, Cf1, A1, dAdx1, dTsdx1))
+      k2 = h * (f(x2, (y0+k1/2), u2, d2, N2, T_s2, Cf2, A2, dAdx2, dTsdx2))
+      k3 = h * (f(x2, (y0+k2/2), u2, d2, N2, T_s2, Cf2, A2, dAdx2, dTsdx2))
+      k4 = h * (f(x4, (y0+k3), u4, d4, N4, T_s4, Cf4, A4, dAdx4, dTsdx4))
       k = (k1+2*k2+2*k3+k4)/6
       yn = y0 + k
       y_list.append(yn) #appending newly calculated y-value to y-list
       y0 = yn  #incrementing y
     return y_list
 
-  #Function defining dNdx used for RK4 for calculating N
-  def f_N(self, x, N, not_used, P, T, A, dQdx, dFdx, dAdx):    
-    term1 = (N/(1-N))*((1+self.gamma*N)/(self.cp*T))*(dQdx)
-    term2 = (N/(1-N))*((2+(self.gamma-1)*N)/(Rs*T))*(dFdx)
-    term3 = -(N/(1-N))*((2+(self.gamma-1)*N)/A)*(dAdx)
-    print(N, A, dAdx, self.gamma, term3)
-    return term1+term2+term3
+  def f_u(self, x, u, not_used, d, N, T_s, Cf, A, dAdx, dTsdx):
+    dH = 2*(np.sqrt(A/np.pi))
+    term1 = (-1/A)*(dAdx)
+    term2 = ((1+((self.gamma-1)/2)*N)/T_s)*(dTsdx)
+    term3 = ((2*self.gamma*N)/dH)*Cf
+    return (u/(1-N))*(term1+term2+term3)
+  
+  def f_density(self, x, d, u, not_used, N, T_s, Cf, A, dAdx, dTsdx):    
+    dH = 2*(np.sqrt(A/np.pi))
+    term1 = (N/A)*(dAdx)
+    term2 = -((1+((self.gamma-1)/2)*N)/T_s)*(dTsdx)
+    term3 = -((2*self.gamma*N)/dH)*Cf
 
-  #Function defining dPdx used for RK4 for calculating P
-  def f_P(self, x, P, N, not_used, T, A, dQdx, dFdx, dAdx):
-    term1 = -(P/(1-N))*((self.gamma*N)/(self.cp*T))*(dQdx)
-    term2 = -(P/(1-N))*((1+(self.gamma-1)*N)/(Rs*T))*(dFdx)
-    term3 = (P/(1-N))*((self.gamma*N)/A)*(dAdx)
-    return term1+term2+term3
+    return (d/(1-N))*(term1+term2+term3)
+  #Function defining dNdx used for RK4 for calculating N
+  def f_N(self, x, N, u, d, not_used, T_s, Cf, A, dAdx, dTsdx):    
+    dH = 2*(np.sqrt(A/np.pi))
+    term1 = -(2*(1+((self.gamma-1)/2)*N)/A)*(dAdx)
+    term2 = ((1+self.gamma*N)*(1+((self.gamma-1)/2)*N)/T_s)*(dTsdx)
+    term3 = ((4*self.gamma*N*(1+((self.gamma-1)/2)*N))/dH)*Cf
+    print(dAdx, dTsdx, Cf, N, (N/(1-N))*(term1+term2+term3), x*1000)
+    return (N/(1-N))*(term1+term2+term3)
+
+  #Function defining dPdx used for RK4 for calculating Ps
+  def f_Ps(self, x, Ps, u, d, N, T_s, Cf, A, dAdx, dTsdx):
+    dH = 2*(np.sqrt(A/np.pi))
+    term1 = 0
+    term2 = -((self.gamma*N)/(2*T_s))*(dTsdx)
+    term3 = -(2*self.gamma*N/dH)*Cf
+    return Ps*(term1+term2+term3)
 
   #Function defining dTdx used for RK4 for calculating T
-  def f_T(self, x, T, N, P, not_used, A, dQdx, dFdx, dAdx):
-    term1 = (T/(1-N))*((1-self.gamma*N)/(self.cp*T))*(dQdx)
-    term2 = -(T/(1-N))*(((self.gamma-1)*N)/(Rs*T))*(dFdx)
-    term3 = (T/(1-N))*(((self.gamma-1)*N)/A)*(dAdx)
-    return term1+term2+term3
+  def f_T(self, x, T, u, d, N, T_s, Cf, A, dAdx, dTsdx):
+    dH = 2*(np.sqrt(A/np.pi))
+    term1 = (((self.gamma-1)*N)/A)*(dAdx)
+    term2 = ((1-self.gamma*N)*(1+((self.gamma-1)/2)*N)/T_s)*(dTsdx)
+    term3 = -((2*self.gamma*(self.gamma-1)*(N**2))/dH)*Cf
+
+    return (T/(1-N))*(term1+term2+term3)
+  
+  def f_Ts(self, x, T_s, u, d, N, not_used, Cf, A, dAdx, dqdx):
+    return (1/self.cp)*(dqdx)
 
   #Calculate cp based on reference temperature T*
   def calc_cp(self, T_star):
@@ -328,37 +343,15 @@ class Engine:
         lambda_mix += ((all_species[i][0]*lambda_species[i])/(all_species[i][0] + sum_lambda))
       thermal_conductivity.append(lambda_mix)
       viscosity.append(viscosity_mix)
+
     return np.array(viscosity)*(10**-7), np.array(thermal_conductivity)/10000
 
-  def calc_hg(self, viscosity, Pr, T_wall, T_stag, P, N):
+  def calc_hg(self, viscosity, Pr, T_wall, T_s, P, N):
     C = 0.026 #Generally accepted constant for Bartz
-    sigma = (((T_wall/(2*T_stag))*(1+((self.gamma-1)/2)*N) + 0.5)**(-0.68))*((1+((self.gamma-1)/2)*N)**(-0.12))
+    sigma = (((T_wall/(2*T_s))*(1+((self.gamma-1)/2)*N) + 0.5)**(-0.68))*((1+((self.gamma-1)/2)*N)**(-0.12))
     hg = ((C/(self.D_t**0.2))*(((viscosity**0.2)*self.cp)/(Pr**0.6))*((P**0.8)/self.c_star)*((self.D_t**0.1)/self.Rc_t))*((self.A_t/self.area)**0.9)*sigma
     return hg
 
-  def calc_f(self, epsilon, A, density, N, viscosity):
-    r = np.sqrt(A/(np.pi))
-    D = 2*r
-    V = np.sqrt(N)*self.c
-    Re = density*V*D/viscosity
-    #Using the Haaland Equation
-    f = (1/(-1.8*np.log10((6.9/Re)+((epsilon/(3.7*D))**1.11))))**2
-
-    #We cannot use this explicit method of solving for Darcy friction coefficient because the 10**(b/(2*a)) term causes an overflow error.
-    #Rh = np.sqrt(A/np.pi)/2
-    #a = 2.51/Re
-    #b = (epsilon)/(14.8*Rh)
-    #f = 1/((((2*lambertw((np.log(10)/(2*a))*(10**(b/(2*a)))))/np.log(10)) - (b/a))**2)
-
-    return f
-
-  def calc_dFdx(self, f, N, T, A):
-    L = self.dx
-    V = np.sqrt(N)*self.c
-    D = 2*np.sqrt(A/(np.pi))
-    F = (f*L*(V**2))/(2*D)
-    dFdx = np.gradient(F, self.dx)
-    return dFdx
 """
 The Engine class intakes many parameters, split up into four categories: geometry, initial conditions, flow properties, and chemical properties
 The contents of each of these lists are as follows
@@ -368,14 +361,14 @@ Flow properties: Absolute roughness of the contour (float), characteristic veloc
 Chemical properties: Mass fraction of CO2, H2O, and O2, and mole fraction of CO2, H2O, and O2 (6-array)
 """
 
-contour = pd.read_csv("engine_contour_test7.csv")
+contour = pd.read_csv("engine_contour_test8.csv")
 x = np.array(contour["x"])*0.0254 #in to m
 radius = np.array(contour["y"])*0.0254 #in to m
 R_ct = 0.625*0.0254 #in to m
 T_wall0 = 800#293 #Room temp in K
 T0 = 3284 #K
 P0 = 220*6894.75729 #psi to Pa
-M0 = 0.07
+M0 = 0.09
 epsilon = 0.0015
 c_star = 1837.8 #m/s
 mdot = 0.366 #kg/s
@@ -387,7 +380,7 @@ chem_props = [MM_CO2/MM_total, MM_H2O/MM_total, MM_O2/MM_total, 0.25, 0.5, 0.25]
 
 Blip = Engine(geometries, conditions_initial, flow_props, chem_props)
 
-finalMach, final_viscosity, final_thermal_conductivity, final_temp, final_pressure, final_q, final_hg, final_T_star, final_dFdx, f = Blip.Run_Heat_Transfer()
+finalMach, final_Ts, final_Ps, final_temp, final_hg, final_q, final_dAdx, final_dTsdx, final_viscosity, final_thermal_conductivity = Blip.Run_Heat_Transfer()
 
 fig, axes = plt.subplots(3, 3, figsize=(12, 12))  # 3 rows, 3 column
 
@@ -399,25 +392,25 @@ axes[0, 0].set_xlabel("Axial distance (mm)")
 axes[0, 0].set_ylabel("Mach Number")
 
 # Second subplot
-axes[1, 0].plot(x*1000, final_temp, color='green')
-axes[1, 0].set_title("T vs Length")
+axes[1, 0].plot(x*1000, final_Ts, color='green')
+axes[1, 0].set_title("Ts vs Length")
 axes[1, 0].set_xlabel("Axial distance (mm)")
-axes[1, 0].set_ylabel("Temperature (K)")
+axes[1, 0].set_ylabel("Stagnation Temperature (K)")
 
 
 # Third subplot
-axes[2, 0].plot(x*1000, final_pressure/1000, color='blue')
-axes[2, 0].set_title("Pressure vs Length")
+axes[2, 0].plot(x*1000, final_Ps, color='blue')
+axes[2, 0].set_title("Ps vs Length")
 axes[2, 0].set_xlabel("Axial distance (mm)")
-axes[2, 0].set_ylabel("Pressure (kPa)")
+axes[2, 0].set_ylabel("Stagnation Pressure (kPa)")
 
 
 # Second Row
 # First subplot
-axes[0, 1].plot(x*1000, final_viscosity*1000, color='red')
-axes[0, 1].set_title("Viscosity vs Length")
+axes[0, 1].plot(x*1000, final_q, color='red')
+axes[0, 1].set_title("Heat Flux vs Length")
 axes[0, 1].set_xlabel("Axial distance (mm)")
-axes[0, 1].set_ylabel("Viscosity (micropoise)")
+axes[0, 1].set_ylabel("Heat Flux (J/m2s)")
 
 # Second subplot
 axes[1, 1].plot(x*1000, radius*1000, color='green')
@@ -426,17 +419,17 @@ axes[1, 1].set_xlabel("Axial distance (mm)")
 axes[1, 1].set_ylabel("Radius (mm)")
 
 # Third subplot
-axes[2, 1].plot(x*1000, final_thermal_conductivity, color='blue')
-axes[2, 1].set_title("Lambda vs Length")
+axes[2, 1].plot(x*1000, final_temp, color='blue')
+axes[2, 1].set_title("T vs Length")
 axes[2, 1].set_xlabel("Axial distance (mm)")
-axes[2, 1].set_ylabel("Thermal conductivity (Watts/K m)")
+axes[2, 1].set_ylabel("Temperature (K)")
 
 #Third Row
 # First subplot
-axes[0, 2].plot(x*1000, final_dFdx, color='red')
-axes[0, 2].set_title("dFdx vs Length")
+axes[0, 2].plot(x*1000, final_dAdx, color='red')
+axes[0, 2].set_title("dAdx vs Length")
 axes[0, 2].set_xlabel("Axial distance (mm)")
-axes[0, 2].set_ylabel("dFdx")
+axes[0, 2].set_ylabel("dAdx")
 
 # Second subplot
 axes[1, 2].plot(x*1000, final_hg, color='green')
@@ -445,10 +438,10 @@ axes[1, 2].set_xlabel("Axial distance (mm)")
 axes[1, 2].set_ylabel("Heat Transfer Coefficient")
 
 # Third subplot
-axes[2, 2].plot(x*1000, f, color='blue')
-axes[2, 2].set_title("Friction Factor vs Length")
+axes[2, 2].plot(x*1000, final_dTsdx, color='blue')
+axes[2, 2].set_title("dTsdx vs Length")
 axes[2, 2].set_xlabel("Axial distance (mm)")
-axes[2, 2].set_ylabel("Friction Factor")
+axes[2, 2].set_ylabel("dTsdx")
 # Adjust layout to prevent overlapping
 plt.tight_layout()
 
