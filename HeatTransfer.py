@@ -33,9 +33,7 @@ Rs = Ru/MM_total #Specific gas constant of entire mixture (J/kg K)
 
 """
 TODO:
-- change rk4 algorithm to new influence coefficients
-- change definitions of q and dQdx
-- eliminate dFdx in favor of new friction accounting method
+- Update correction method to inside Heat transfer loop
 """
 
 class Engine:
@@ -76,30 +74,22 @@ class Engine:
     u = np.zeros(len(x)) + np.sqrt(N*self.gamma*Rs*T_e)
     density = np.zeros(len(x)) + P/(Rs*T_e)
     correction = 1
-    step = 0.000000001
+    step = 0.1
 
     Re = density*u*x/viscosity
     Re[0] = 0.1
 
     Cf = 0.0576/(Re**0.2)
     N_0 = self.M_0**2
+
     #Good conditions: N[:self.index_t-1] < 1, N[self.index_t:]>1, and np.sum(N<0) == 0
     #Low conditions: Never gets to 1, hits 1 and goes back down
     #High conditions: Hits 1 before throat, goes below 0
-    while not ((N[:self.index_t-1]<0.97).all() and (N[self.index_t:]>1.03).all() and (np.sum(N<0)==0)):
-      N = np.zeros(len(self.x)) + N_0
-      N = np.array(self.rk4(self.f_N, N_0, density, N, T_s, Cf, dTsdx))
-      if (N<0).any() or (N[:self.index_t] > 1).any():
-        correction = -1
-      elif (N<1).all() or (N[self.index_t:]<1).any():
-        correction = 1
-      else:
-        correction = 0
-      
-      N_0 += step*correction
-      print(N_0)
-      print(N[self.index_t-1], N[self.index_t])
-      print(correction)
+    #Start with high step. Check whether high or low
+    #If high, correction=-1, if low, correction=1, if good, correction=0. Store result. Modify N_0.
+    #Repeat. If last = new, step stays the same. Otherwise, step gets reduced by 1/2. Modify N_0.
+    N = np.zeros(len(self.x)) + N_0
+    N_0 = self.make_correction(N_0, density, N, T_s, Cf, dTsdx)
     #Defining these terms for the error function later on. They will be updated and modified in the error function
     T_e_last = np.array([T_e, T_e, T_e])
     T_wall_last = np.array([T_wall, T_wall, T_wall])
@@ -121,9 +111,10 @@ class Engine:
     count = 0
     #Running loop. This will end when our percent error is "good enough" or, as defined currently, after 200 iterations
     q_diff = 1
+    
     while count < 20:
+      N_0 = self.make_correction(N_0, density, N, T_s, Cf, dTsdx)
       N = np.array(self.rk4(self.f_N, N_0, density, N, T_s, Cf, dTsdx))
-      
       #Thermodynamic Properties
       #We're using a 4th order Runge-Kutta algorithm to evaluate the partial differential equations for velocity (u), density, N, stagnation pressure, and free stream temperature
       u = np.sqrt(N*self.gamma*Rs*T_e)
@@ -181,6 +172,29 @@ class Engine:
     results = pd.DataFrame({"x":self.x/0.0254, "r":self.radius/0.0254, "Mach Number":np.sqrt(N), "Stagnation Temperature (K)":T_s, "Stagnation Pressure (kPa)":P_s/1000, "Static Temperature (K)":T_e, "Heat Transfer Coefficient":hg, "Heat Flux (kJ/m2s)":q/1000, "Viscosity (Pa s)":viscosity, "Thermal Conductivity (W/m K)":thermal_conductivity, "Density (kg/m3)":density, "Velocity (m/s)":u, "Reynold's Number":Re, "Skin Friction Coefficient":Cf})
     return results
 
+  def make_correction(self, N_0, density, N, T_s, Cf, dTsdx):
+    correction = 1
+    last_correction = 0
+    step = 0.1
+    while not correction==0:
+      if N_0 <= 0:
+        correction = 1
+        N_0 += step*correction
+        step/=2
+      N_new = np.array(self.rk4(self.f_N, N_0, density, N, T_s, Cf, dTsdx))
+      if (N_new<0).any() or (N_new[:self.index_t] > 1).any():
+        correction = -1
+      elif (N_new<1).all() or (N_new[self.index_t:]<1).any():
+        correction = 1
+      elif ((N_new[:self.index_t-1]<1).all() and (N_new[self.index_t:]>1).all() and (np.sum(N_new<0)==0)):
+        correction = 0
+      else:
+        print("New case occurred")
+      if last_correction != correction:
+        last_correction=correction
+        step/=2
+      N_0 += step*correction
+    return N_0
 
   def calc_T_star(self, T_e, N, T_wall):
     #Reference temperature for finding flow properties based on T_e, T_wall, and mach number
@@ -384,7 +398,7 @@ R_ct = 0.625*0.0254 #in to m
 T_wall0 = 800#293 #Room temp in K
 T0 = 3284 #K
 P0 = 220*6894.75729 #psi to Pa
-M0 = 0.088
+M0 = 0.08
 epsilon = 0.0015
 c_star = 1837.8 #m/s
 mdot = 0.366 #kg/s
