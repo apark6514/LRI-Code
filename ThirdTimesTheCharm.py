@@ -157,8 +157,8 @@ class Engine:
       count+=1
     plt.ioff()  # Turn off interactive mode
     plt.show()  # Keep the plot open after the loop ends
-    
-    return np.sqrt(N), T_s, P_s, T_e, hg, q, self.dAdx, dTsdx, viscosity, thermal_conductivity, Cf
+    results = pd.DataFrame({"x":self.x/0.0254, "r":self.radius/0.0254, "Mach Number":np.sqrt(N), "Stagnation Temperature (K)":T_s, "Stagnation Pressure (kPa)":P_s/1000, "Static Temperature (K)":T_e, "Heat Transfer Coefficient":hg, "Heat Flux (kJ/m2s)":q/1000, "Viscosity (Pa s)":viscosity, "Thermal Conductivity (W/m K)":thermal_conductivity, "Density (kg/m3)":density, "Velocity (m/s)":u, "Reynold's Number":Re, "Skin Friction Coefficient":Cf})
+    return results
 
 
   def calc_T_star(self, T_e, N, T_wall):
@@ -441,26 +441,27 @@ chem_props = [MM_CO2/MM_total, MM_H2O/MM_total, MM_O2/MM_total, 0.25, 0.5, 0.25]
 
 Blip = Engine(geometries, conditions_initial, flow_props, chem_props)
 
-finalMach, final_Ts, final_Ps, final_temp, final_hg, final_q, final_dAdx, final_dTsdx, final_viscosity, final_thermal_conductivity, final_Cf = Blip.Run_Heat_Transfer()
+results = Blip.Run_Heat_Transfer()
 
 fig, axes = plt.subplots(3, 3, figsize=(12, 12), constrained_layout=True)  # 3 rows, 3 column
 
+results.to_csv('HeatTransferResults.csv')
 # First Row
 # First subplot
-axes[0, 0].plot(x*1000, finalMach, color='red')
+axes[0, 0].plot(x*1000, results["Mach Number"], color='red')
 axes[0, 0].set_title("Mach vs Length")
 axes[0, 0].set_xlabel("Axial distance (mm)")
 axes[0, 0].set_ylabel("Mach Number")
 
 # Second subplot
-axes[1, 0].plot(x*1000, final_Ts, color='green')
+axes[1, 0].plot(x*1000, results["Stagnation Temperature (K)"], color='green')
 axes[1, 0].set_title("Ts vs Length")
 axes[1, 0].set_xlabel("Axial distance (mm)")
 axes[1, 0].set_ylabel("Stagnation Temperature (K)")
 
 
 # Third subplot
-axes[2, 0].plot(x*1000, final_Ps, color='blue')
+axes[2, 0].plot(x*1000, results["Stagnation Pressure (kPa)"], color='blue')
 axes[2, 0].set_title("Ps vs Length")
 axes[2, 0].set_xlabel("Axial distance (mm)")
 axes[2, 0].set_ylabel("Stagnation Pressure (kPa)")
@@ -468,7 +469,7 @@ axes[2, 0].set_ylabel("Stagnation Pressure (kPa)")
 
 # Second Row
 # First subplot
-axes[0, 1].plot(x*1000, final_q, color='red')
+axes[0, 1].plot(x*1000, results["Heat Flux (kJ/m2s)"], color='red')
 axes[0, 1].set_title("Heat Flux vs Length")
 axes[0, 1].set_xlabel("Axial distance (mm)")
 axes[0, 1].set_ylabel("Heat Flux (J/m2s)")
@@ -480,27 +481,27 @@ axes[1, 1].set_xlabel("Axial distance (mm)")
 axes[1, 1].set_ylabel("Radius (mm)")
 
 # Third subplot
-axes[2, 1].plot(x*1000, final_temp, color='blue')
+axes[2, 1].plot(x*1000, results["Static Temperature (K)"], color='blue')
 axes[2, 1].set_title("T vs Length")
 axes[2, 1].set_xlabel("Axial distance (mm)")
 axes[2, 1].set_ylabel("Temperature (K)")
 
 #Third Row
 # First subplot
-axes[0, 2].plot(x*1000, final_dAdx, color='red')
+axes[0, 2].plot(x*1000, results["Density (kg/m3)"], color='red')
 axes[0, 2].set_title("dAdx vs Length")
 axes[0, 2].set_xlabel("Axial distance (mm)")
 axes[0, 2].set_ylabel("dAdx")
 
 # Second subplot
-axes[1, 2].plot(x*1000, final_hg, color='green')
+axes[1, 2].plot(x*1000, results["Heat Transfer Coefficient"], color='green')
 axes[1, 2].set_title("Heat Transfer Coefficient vs Length")
 axes[1, 2].set_xlabel("Axial distance (mm)")
 axes[1, 2].set_ylabel("Heat Transfer Coefficient")
 
 # Third subplot
-axes[2, 2].plot(x*1000, final_dTsdx, color='blue')
-axes[2, 2].set_title("dTsdx vs Length")
+axes[2, 2].plot(x*1000, results["Velocity (m/s)"], color='blue')
+axes[2, 2].set_title("Velocity")
 axes[2, 2].set_xlabel("Axial distance (mm)")
 axes[2, 2].set_ylabel("dTsdx")
 # Adjust layout to prevent overlapping

@@ -76,25 +76,30 @@ class Engine:
     u = np.zeros(len(x)) + np.sqrt(N*self.gamma*Rs*T_e)
     density = np.zeros(len(x)) + P/(Rs*T_e)
     correction = 1
-    step = 0.000001
-    
-      
+    step = 0.000000001
 
     Re = density*u*x/viscosity
     Re[0] = 0.1
 
     Cf = 0.0576/(Re**0.2)
-    N_0 = N[0]
-    while not ((((N[self.index_t-1] < 1) and (N[self.index_t]>1.09))) and (np.sum(N>1)>5 and np.sum(N<0) == 0)):
-      N = np.zeros(len(self.x)) + (N_0**2) 
+    N_0 = self.M_0**2
+    #Good conditions: N[:self.index_t-1] < 1, N[self.index_t:]>1, and np.sum(N<0) == 0
+    #Low conditions: Never gets to 1, hits 1 and goes back down
+    #High conditions: Hits 1 before throat, goes below 0
+    while not ((N[:self.index_t-1]<0.97).all() and (N[self.index_t:]>1.03).all() and (np.sum(N<0)==0)):
+      N = np.zeros(len(self.x)) + N_0
       N = np.array(self.rk4(self.f_N, N_0, density, N, T_s, Cf, dTsdx))
-      if (N<0).any() or (N[self.index_t] < 1.09):
-        correction = 1
-      elif np.sum(N>1)>5 and (N[:self.index_t]<1).all():
-        correction = 0
-      else:
+      if (N<0).any() or (N[:self.index_t] > 1).any():
         correction = -1
+      elif (N<1).all() or (N[self.index_t:]<1).any():
+        correction = 1
+      else:
+        correction = 0
+      
       N_0 += step*correction
+      print(N_0)
+      print(N[self.index_t-1], N[self.index_t])
+      print(correction)
     #Defining these terms for the error function later on. They will be updated and modified in the error function
     T_e_last = np.array([T_e, T_e, T_e])
     T_wall_last = np.array([T_wall, T_wall, T_wall])
@@ -172,8 +177,9 @@ class Engine:
       count+=1
     plt.ioff()  # Turn off interactive mode
     plt.show()  # Keep the plot open after the loop ends
-    
-    return np.sqrt(N), T_s, P_s, T_e, q, viscosity, thermal_conductivity, Cf, Re, u, density
+
+    results = pd.DataFrame({"x":self.x/0.0254, "r":self.radius/0.0254, "Mach Number":np.sqrt(N), "Stagnation Temperature (K)":T_s, "Stagnation Pressure (kPa)":P_s/1000, "Static Temperature (K)":T_e, "Heat Transfer Coefficient":hg, "Heat Flux (kJ/m2s)":q/1000, "Viscosity (Pa s)":viscosity, "Thermal Conductivity (W/m K)":thermal_conductivity, "Density (kg/m3)":density, "Velocity (m/s)":u, "Reynold's Number":Re, "Skin Friction Coefficient":Cf})
+    return results
 
 
   def calc_T_star(self, T_e, N, T_wall):
@@ -370,15 +376,15 @@ Flow properties: Absolute roughness of the contour (float), characteristic veloc
 Chemical properties: Mass fraction of CO2, H2O, and O2, and mole fraction of CO2, H2O, and O2 (6-array)
 """
 
-contour = pd.read_csv("engine_contour_test7.csv")
-x = np.array(contour["x"])*0.0254 #in to m
-radius = np.array(contour["y"])*0.0254 #in to m
+contour = pd.read_csv("engine_contour_test9.csv")
+x = np.array(contour["x "])*0.0254 #in to m
+radius = np.array(contour["y "])*0.0254 #in to m
 index_t = np.where(radius==np.min(radius))[0]
 R_ct = 0.625*0.0254 #in to m
 T_wall0 = 800#293 #Room temp in K
 T0 = 3284 #K
 P0 = 220*6894.75729 #psi to Pa
-M0 = 0.00001
+M0 = 0.088
 epsilon = 0.0015
 c_star = 1837.8 #m/s
 mdot = 0.366 #kg/s
@@ -390,34 +396,35 @@ chem_props = [MM_CO2/MM_total, MM_H2O/MM_total, MM_O2/MM_total, 0.25, 0.5, 0.25]
 
 Blip = Engine(geometries, conditions_initial, flow_props, chem_props)
 
-final_Mach, final_Ts, final_Ps, final_T_e, final_q, final_viscosity, final_thermal_conductivity, final_Cf, final_Re, final_u, final_density = Blip.Run_Heat_Transfer()
+results = Blip.Run_Heat_Transfer()
 
 fig, axes = plt.subplots(3, 3, figsize=(12, 12), constrained_layout=True)  # 3 rows, 3 column
 
+results.to_csv('HeatTransferResults.csv')
 # First Row
 # First subplot
-axes[0, 0].plot(x*1000, final_Mach, color='red')
+axes[0, 0].plot(x*1000, results["Mach Number"], color='red')
 axes[0, 0].set_title("Mach Number")
 axes[0, 0].set_xlabel("Axial distance (mm)")
 axes[0, 0].set_ylabel("Mach Number")
 
 # Second subplot
-axes[1, 0].plot(x*1000, final_Ts, color='green')
+axes[1, 0].plot(x*1000, results["Stagnation Temperature (K)"], color='green')
 axes[1, 0].set_title("Stagnation Temperature")
 axes[1, 0].set_xlabel("Axial distance (mm)")
-axes[1, 0].set_ylabel("Stagnation Temperature (K)")
+axes[1, 0].set_ylabel("Temperature (K)")
 
 
 # Third subplot
-axes[2, 0].plot(x*1000, final_Ps/1000, color='blue')
+axes[2, 0].plot(x*1000, results["Stagnation Pressure (kPa)"], color='blue')
 axes[2, 0].set_title("Stagnation Pressure")
 axes[2, 0].set_xlabel("Axial distance (mm)")
-axes[2, 0].set_ylabel("Stagnation Pressure (kPa)")
+axes[2, 0].set_ylabel("Pressure (kPa)")
 
 
 # Second Row
 # First subplot
-axes[0, 1].plot(x*1000, final_q/1000, color='red')
+axes[0, 1].plot(x*1000, results["Heat Flux (kJ/m2s)"], color='red')
 axes[0, 1].set_title("Heat Flux")
 axes[0, 1].set_xlabel("Axial distance (mm)")
 axes[0, 1].set_ylabel("Heat Flux (kJ/m2s)")
@@ -429,29 +436,29 @@ axes[1, 1].set_xlabel("Axial distance (mm)")
 axes[1, 1].set_ylabel("Radius (mm)")
 
 # Third subplot
-axes[2, 1].plot(x*1000, final_T_e, color='blue')
-axes[2, 1].set_title("Free Stream Temperature")
+axes[2, 1].plot(x*1000, results["Static Temperature (K)"], color='blue')
+axes[2, 1].set_title("Static Temperature")
 axes[2, 1].set_xlabel("Axial distance (mm)")
 axes[2, 1].set_ylabel("Temperature (K)")
 
 #Third Row
 # First subplot
-axes[0, 2].plot(x*1000, final_Cf, color='red')
-axes[0, 2].set_title("Skin Friction Coefficient")
+axes[0, 2].plot(x*1000, results["Density (kg/m3)"], color='red')
+axes[0, 2].set_title("Density")
 axes[0, 2].set_xlabel("Axial distance (mm)")
-axes[0, 2].set_ylabel("Skin Friction Coefficient")
+axes[0, 2].set_ylabel("Density (kg/m3)")
 
 # Second subplot
-axes[1, 2].plot(x*1000, final_Re, color='green')
-axes[1, 2].set_title("Reynold's Number")
+axes[1, 2].plot(x*1000, results["Heat Transfer Coefficient"], color='green')
+axes[1, 2].set_title("Heat Transfer Coefficient")
 axes[1, 2].set_xlabel("Axial distance (mm)")
-axes[1, 2].set_ylabel("Reynold's Number")
+axes[1, 2].set_ylabel("Heat Transfer Coefficient")
 
 # Third subplot
-axes[2, 2].plot(x*1000, final_density, color='blue')
-axes[2, 2].set_title("Density")
+axes[2, 2].plot(x*1000, results["Reynold's Number"], color='blue')
+axes[2, 2].set_title("Reynold's Number")
 axes[2, 2].set_xlabel("Axial distance (mm)")
-axes[2, 2].set_ylabel("kg/m3")
+axes[2, 2].set_ylabel("Reynold's Number")
 # Adjust layout to prevent overlapping
 plt.tight_layout()
 fig.subplots_adjust(wspace=0.5, hspace=0.5)
