@@ -432,7 +432,7 @@ T0G = 3400 #K
 P0G = 300*6894.75729 #psi to Pa
 M0G = 0.08
 epsilonG = 0.0015
-c_starG = 1837.8 #m/s
+c_starG = 1788 #m/s
 mdotG = 0.366 #kg/s
 
 geometriesG = [xG, radiusG, R_ctG]
