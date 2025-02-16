@@ -133,9 +133,9 @@ class Engine:
 
       #Heat transfer
       hg = self.calc_hg(viscosity, Pr, T_wall, T_s, P_s, N)
-      q = hg*(2*np.pi*self.radius*self.dx)*(T_aw-T_wall)
+      q = hg*(T_aw-T_wall)
       #Update stagnation temperature
-      T_s = np.array(self.rk4(self.f_Ts, T_s[0], density, N, T_s, Cf, q)) #(Dimensionless)
+      T_s = np.array(self.rk4(self.f_Ts, T_s[0], density, N, T_s, Cf, q*(2*np.pi*self.radius*self.dx))) #(Dimensionless)
       dTsdx = np.gradient(T_s, self.dx)
 
       #Residuals
@@ -169,7 +169,7 @@ class Engine:
     plt.ioff()  # Turn off interactive mode
     plt.show()  # Keep the plot open after the loop ends
 
-    results = pd.DataFrame({"x":self.x/0.0254, "r":self.radius/0.0254, "Mach Number":np.sqrt(N), "Stagnation Temperature (K)":T_s, "Stagnation Pressure (kPa)":P_s/1000, "Static Temperature (K)":T_e, "Heat Transfer Coefficient":hg, "Heat Flux (kJ/m2s)":q/1000, "Viscosity (Pa s)":viscosity, "Thermal Conductivity (W/m K)":thermal_conductivity, "Density (kg/m3)":density, "Velocity (m/s)":u, "Reynold's Number":Re, "Skin Friction Coefficient":Cf})
+    results = pd.DataFrame({"x":self.x/0.0254, "r":self.radius/0.0254, "Mach Number":np.sqrt(N), "Stagnation Temperature (K)":T_s, "Stagnation Pressure (kPa)":P_s/1000, "Static Temperature (K)":T_e, "Heat Transfer Coefficient":hg, "Heat Flux (kW/m2)":q/1000, "Viscosity (Pa s)":viscosity, "Thermal Conductivity (W/m K)":thermal_conductivity, "Density (kg/m3)":density, "Velocity (m/s)":u, "Reynold's Number":Re, "Skin Friction Coefficient":Cf})
     return results
 
   def make_correction(self, N_0, density, N, T_s, Cf, dTsdx):
@@ -285,7 +285,7 @@ class Engine:
     return dTdx
   
   def f_Ts(self, x, T_s, d, N, not_used, Cf, A, dAdx, q, last):
-    return -(1/self.cp)*q
+    return -(1/self.cp)*(q)
 
   #Calculate cp based on reference temperature T*
   def calc_cp(self, T_star):
@@ -438,10 +438,10 @@ axes[2, 0].set_ylabel("Pressure (kPa)")
 
 # Second Row
 # First subplot
-axes[0, 1].plot(x*1000, results["Heat Flux (kJ/m2s)"], color='red')
+axes[0, 1].plot(x*1000, results["Heat Flux (kW/m2)"], color='red')
 axes[0, 1].set_title("Heat Flux")
 axes[0, 1].set_xlabel("Axial distance (mm)")
-axes[0, 1].set_ylabel("Heat Flux (kJ/m2s)")
+axes[0, 1].set_ylabel("Heat Flux (kW/m2)")
 
 # Second subplot
 axes[1, 1].plot(x*1000, radius*1000, color='green')
@@ -476,5 +476,6 @@ axes[2, 2].set_ylabel("Reynold's Number")
 # Adjust layout to prevent overlapping
 plt.tight_layout()
 fig.subplots_adjust(wspace=0.5, hspace=0.5)
+fig.savefig("HeatTransferGraphs.pdf", format="pdf", bbox_inches="tight")
 # Show the plot
 plt.show()
