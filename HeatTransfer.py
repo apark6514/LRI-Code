@@ -29,31 +29,29 @@ MM_CO2 = 0.044009 #Molar mass (kg/mol)
 MM_H2O = 0.01801528 #Molar mass (kg/mol)
 MM_O2 = 0.032004 #Molar mass (kg/mol)
 MM_total = MM_CO2 + MM_H2O + MM_O2 #(kg/mol)
+MM_totalG = 12*MM_CO2 + 13*MM_H2O
 Rs = Ru/MM_total #Specific gas constant of entire mixture (J/kg K)
-
-"""
-TODO:
-- Update correction method to inside Heat transfer loop
-"""
+RsG = Ru/MM_totalG
 
 class Engine:
   def __init__(self, geometry, conditions_initial, flow_props, chem_props):
     self.x = geometry[0] #m
     self.radius = geometry[1] #m
     self.Rc_t = geometry[2] #m
+    self.index_t = np.where(self.radius==np.min(self.radius))[0][0]
     self.x -= self.x[0]
     self.T_wall0, self.T_e0, self.P_0, self.M_0 = conditions_initial
     self.epsilon, self.c_star, self.m_dot = flow_props
-    self.mass_frac_CO2, self.mass_frac_H2O, self.mass_frac_O2, self.mol_frac_CO2, self.mol_frac_H2O, self.mol_frac_O2 = chem_props
+    self.mass_frac_CO2, self.mass_frac_H2O, self.mass_frac_O2, self.mol_frac_CO2, self.mol_frac_H2O, self.mol_frac_O2, self.Rs = chem_props
     self.dx = self.x[1]-self.x[0] #(m)
     self.area = np.pi*(self.radius**2) #(m^2)
     self.dAdx = np.gradient(self.area, self.dx) #(m^2/m)
+    self.dAdx[self.index_t] = (self.area[self.index_t+1] - self.area[self.index_t]) / self.dx
     self.D_t = np.min(self.radius)*2 #Throat diameter (m)
     self.A_t = np.min(np.pi*(self.radius**2)) #Throat area (m)
-    self.index_t = np.where(self.radius==np.min(self.radius))[0][0]
     self.cp = self.calc_cp(self.calc_T_star(self.T_e0, self.M_0**2, self.T_wall0))
-    self.gamma = self.cp/(self.cp-Rs)
-    self.c = np.sqrt(self.gamma*Rs*self.T_e0)
+    self.gamma = self.cp/(self.cp-self.Rs)
+    self.c = np.sqrt(self.gamma*self.Rs*self.T_e0)
 
   #We cannot assume N=1 exactly at throat because it breaks the diff. eq because there is (N-1) term in denominator
   def Run_Heat_Transfer(self):
@@ -64,19 +62,19 @@ class Engine:
     N = np.zeros(len(self.x)) + (self.M_0**2) 
     P = np.zeros(len(self.x)) + self.P_0
     T_star = self.calc_T_star(T_e, N, T_wall) 
-    
+
+
     viscosity, thermal_conductivity = self.calc_viscosity_and_lambda(T_star)
 
     T_s = T_e*(1+((self.gamma-1)/2)*N)
     dTsdx = np.gradient(T_s, self.dx)
     P_s = P*(1+((self.gamma-1)/2)*N)**(self.gamma/(self.gamma-1))
-
-    u = np.zeros(len(x)) + np.sqrt(N*self.gamma*Rs*T_e)
-    density = np.zeros(len(x)) + P/(Rs*T_e)
+    u = np.zeros(len(self.x)) + np.sqrt(N*self.gamma*self.Rs*T_e)
+    density = np.zeros(len(self.x)) + P/(self.Rs*T_e)
     correction = 1
     step = 0.1
 
-    Re = density*u*x/viscosity
+    Re = density*u*self.x/viscosity
     Re[0] = 0.1
 
     Cf = 0.0576/(Re**0.2)
@@ -89,7 +87,7 @@ class Engine:
     #If high, correction=-1, if low, correction=1, if good, correction=0. Store result. Modify N_0.
     #Repeat. If last = new, step stays the same. Otherwise, step gets reduced by 1/2. Modify N_0.
     N = np.zeros(len(self.x)) + N_0
-    N_0 = self.make_correction(N_0, density, N, T_s, Cf, dTsdx)
+    N_0 = self.make_correction(N_0, N, T_s, Cf, dTsdx)
     #Defining these terms for the error function later on. They will be updated and modified in the error function
     T_e_last = np.array([T_e, T_e, T_e])
     T_wall_last = np.array([T_wall, T_wall, T_wall])
@@ -113,17 +111,17 @@ class Engine:
     q_diff = 1
     
     while count < 20:
-      N_0 = self.make_correction(N_0, density, N, T_s, Cf, dTsdx)
-      N = np.array(self.rk4(self.f_N, N_0, density, N, T_s, Cf, dTsdx))
+      N_0 = self.make_correction(N_0, N, T_s, Cf, dTsdx)
+      N = np.array(self.rk4(self.f_N, N_0, N, T_s, Cf, dTsdx))
       #Thermodynamic Properties
       #We're using a 4th order Runge-Kutta algorithm to evaluate the partial differential equations for velocity (u), density, N, stagnation pressure, and free stream temperature
-      u = np.sqrt(N*self.gamma*Rs*T_e)
-      density = Rs*T_e/P
+      u = np.sqrt(N*self.gamma*self.Rs*T_e)
+      density = self.Rs*T_e/P
       Re = density*u*self.x/viscosity
       Re[0] = 1
       Cf = 0.0576/(Re**0.2)
-      P_s = np.array(self.rk4(self.f_Ps, P[0], density, N, T_s, Cf, dTsdx))
-      T_e = np.array(self.rk4(self.f_T, T_e[0], density, N, T_s, Cf, dTsdx))
+      P_s = np.array(self.rk4(self.f_Ps, P[0], N, T_s, Cf, dTsdx))
+      T_e = np.array(self.rk4(self.f_T, T_e[0], N, T_s, Cf, dTsdx))
 
       #Flow properties
       T_star = self.calc_T_star(T_e, N, T_wall)
@@ -135,7 +133,7 @@ class Engine:
       hg = self.calc_hg(viscosity, Pr, T_wall, T_s, P_s, N)
       q = hg*(T_aw-T_wall)
       #Update stagnation temperature
-      T_s = np.array(self.rk4(self.f_Ts, T_s[0], density, N, T_s, Cf, q*(2*np.pi*self.radius*self.dx))) #(Dimensionless)
+      T_s = np.array(self.rk4(self.f_Ts, T_s[0], N, T_s, Cf, q*(2*np.pi*self.radius*self.dx))) #(Dimensionless)
       dTsdx = np.gradient(T_s, self.dx)
 
       #Residuals
@@ -172,7 +170,7 @@ class Engine:
     results = pd.DataFrame({"x":self.x/0.0254, "r":self.radius/0.0254, "Mach Number":np.sqrt(N), "Stagnation Temperature (K)":T_s, "Stagnation Pressure (kPa)":P_s/1000, "Static Temperature (K)":T_e, "Heat Transfer Coefficient":hg, "Heat Flux (kW/m2)":q/1000, "Viscosity (Pa s)":viscosity, "Thermal Conductivity (W/m K)":thermal_conductivity, "Density (kg/m3)":density, "Velocity (m/s)":u, "Reynold's Number":Re, "Skin Friction Coefficient":Cf})
     return results
 
-  def make_correction(self, N_0, density, N, T_s, Cf, dTsdx):
+  def make_correction(self, N_0, N, T_s, Cf, dTsdx):
     correction = 1
     last_correction = 0
     step = 0.1
@@ -181,10 +179,12 @@ class Engine:
         correction = 1
         N_0 += step*correction
         step/=2
-      N_new = np.array(self.rk4(self.f_N, N_0, density, N, T_s, Cf, dTsdx))
-      if (N_new<0).any() or (N_new[:self.index_t] > 1).any():
+      N_new = np.array(self.rk4(self.f_N, N_0, N, T_s, Cf, dTsdx))
+      if (N_new<1).all():
+        correction = 1
+      elif (N_new<0).any() or (N_new[:self.index_t] > 1).any():
         correction = -1
-      elif (N_new<1).all() or (N_new[self.index_t:]<1).any():
+      elif (N_new[self.index_t:]<1).any():
         correction = 1
       elif ((N_new[:self.index_t-1]<1).all() and (N_new[self.index_t:]>1).all() and (np.sum(N_new<0)==0)):
         correction = 0
@@ -194,6 +194,8 @@ class Engine:
         last_correction=correction
         step/=2
       N_0 += step*correction
+      if step < (10**-17):
+        break
     return N_0
 
   def calc_T_star(self, T_e, N, T_wall):
@@ -201,7 +203,7 @@ class Engine:
     T_star = (T_e*(1+(0.032*N) + 0.58*((T_wall/T_e)-1)))
     return np.array(T_star)
 
-  def rk4(self, f, y0, density, N, T_s, Cf, dTsdx):
+  def rk4(self, f, y0, N, T_s, Cf, dTsdx):
     x = self.x
     n = len(x)
     y_list = []
@@ -213,10 +215,6 @@ class Engine:
         x1 = x[i]
         x2 = x[i]+h/2 #x2=x3 so just repeat it
         x4 = x[i]+h
-
-        d1 = density[i]
-        d2 = np.interp(x2, x, density)
-        d4 = np.interp(x4, x, density)
 
         N1 = N[i]
         N2 = np.interp(x2, x, N)
@@ -242,13 +240,13 @@ class Engine:
         dTsdx2 = np.interp(x2, x, dTsdx)
         dTsdx4 = np.interp(x4, x, dTsdx)
 
-        k1 = h * (f(x1, y0, d1, N1, T_s1, Cf1, A1, dAdx1, dTsdx1, last))
-        k2 = h * (f(x2, (y0+k1/2), d2, N2, T_s2, Cf2, A2, dAdx2, dTsdx2, last))
-        k3 = h * (f(x2, (y0+k2/2), d2, N2, T_s2, Cf2, A2, dAdx2, dTsdx2, last))
-        k4 = h * (f(x4, (y0+k3), d4, N4, T_s4, Cf4, A4, dAdx4, dTsdx4, last))
+        k1 = h * (f(x1, y0, N1, T_s1, Cf1, A1, dAdx1, dTsdx1, last))
+        k2 = h * (f(x2, (y0+k1/2), N2, T_s2, Cf2, A2, dAdx2, dTsdx2, last))
+        k3 = h * (f(x2, (y0+k2/2), N2, T_s2, Cf2, A2, dAdx2, dTsdx2, last))
+        k4 = h * (f(x4, (y0+k3), N4, T_s4, Cf4, A4, dAdx4, dTsdx4, last))
         k = (k1+2*k2+2*k3+k4)/6
       else:
-        k = h * (f(x1, y0, d1, N1, T_s1, Cf1, A1, dAdx1, dTsdx1, last))
+        k = h * (f(x1, y0, N1, T_s1, Cf1, A1, dAdx1, dTsdx1, last))
       last = k/h
       yn = y0 + k
       y_list.append(yn) #appending newly calculated y-value to y-list
@@ -257,7 +255,7 @@ class Engine:
 
   #Function defining dNdx used for RK4 for calculating N
 
-  def f_N(self, x, N, d, not_used, T_s, Cf, A, dAdx, dTsdx, last):    
+  def f_N(self, x, N, not_used, T_s, Cf, A, dAdx, dTsdx, last):    
     dH = 2*(np.sqrt(A/np.pi))
     term1 = -(2*(1+((self.gamma-1)/2)*N)/A)*(dAdx)
     term2 = ((1+self.gamma*N)*(1+((self.gamma-1)/2)*N)/T_s)*(dTsdx)
@@ -266,7 +264,7 @@ class Engine:
     return dNdx
 
   #Function defining dPdx used for RK4 for calculating Ps
-  def f_Ps(self, x, Ps, d, N, T_s, Cf, A, dAdx, dTsdx, last):
+  def f_Ps(self, x, Ps, N, T_s, Cf, A, dAdx, dTsdx, last):
     dH = 2*(np.sqrt(A/np.pi))
     term1 = 0
     term2 = -((self.gamma*N)/(2*T_s))*(dTsdx)
@@ -274,7 +272,7 @@ class Engine:
     return Ps*(term1+term2+term3)
 
   #Function defining dTdx used for RK4 for calculating T
-  def f_T(self, x, T, d, N, T_s, Cf, A, dAdx, dTsdx, last):
+  def f_T(self, x, T, N, T_s, Cf, A, dAdx, dTsdx, last):
     dH = 2*(np.sqrt(A/np.pi))
     term1 = (((self.gamma-1)*N)/A)*(dAdx)
     term2 = ((1-self.gamma*N)*(1+((self.gamma-1)/2)*N)/T_s)*(dTsdx)
@@ -284,7 +282,7 @@ class Engine:
       dTdx = last
     return dTdx
   
-  def f_Ts(self, x, T_s, d, N, not_used, Cf, A, dAdx, q, last):
+  def f_Ts(self, x, T_s, N, not_used, Cf, A, dAdx, q, last):
     return -(1/self.cp)*(q)
 
   #Calculate cp based on reference temperature T*
@@ -390,6 +388,7 @@ Flow properties: Absolute roughness of the contour (float), characteristic veloc
 Chemical properties: Mass fraction of CO2, H2O, and O2, and mole fraction of CO2, H2O, and O2 (6-array)
 """
 
+#Ripple Parameters
 contour = pd.read_csv("engine_contour_test9.csv")
 x = np.array(contour["x "])*0.0254 #in to m
 radius = np.array(contour["y "])*0.0254 #in to m
@@ -406,15 +405,50 @@ mdot = 0.366 #kg/s
 geometries = [x, radius, R_ct]
 conditions_initial = [T_wall0, T0, P0, M0]
 flow_props = [epsilon, c_star, mdot]
-chem_props = [MM_CO2/MM_total, MM_H2O/MM_total, MM_O2/MM_total, 0.25, 0.5, 0.25]
+chem_props = [MM_CO2/MM_total, MM_H2O/MM_total, MM_O2/MM_total, 0.25, 0.5, 0.25, Rs]
 
-Blip = Engine(geometries, conditions_initial, flow_props, chem_props)
+Ripple = Engine(geometries, conditions_initial, flow_props, chem_props)
 
-results = Blip.Run_Heat_Transfer()
+#Grunt Parameters
+contourG = pd.read_csv("output.csv", names=["x","y"])
+xG = np.linspace(contourG["x"][0], contourG["x"][len(contourG["x"])-1], num=500)*0.0254 #in to m
+radiusG = np.interp(xG, contourG["x"]*0.0254, contourG["y"]*0.0254) #in to m
+index_tG = np.where(radiusG==np.min(radiusG))[0][0]
+
+# Compute First Derivative (dy/dx) using NumPy's gradient
+dxG = xG[1]-xG[0]
+dyG = np.gradient(radiusG, dxG)
+dyG[index_tG] = (radiusG[index_tG+1] - radiusG[index_tG]) / dxG
+
+# Compute Second Derivative (d²y/dx²)
+d2yG = np.gradient(dyG, dxG)
+
+# Compute Instantaneous Radius of Curvature
+RG = (1 + dyG**2) ** (3/2) / np.abs(d2yG)
+R_ctG = RG[index_tG]
+
+T_wall0G = 293 #Room temp in K
+T0G = 3400 #K
+P0G = 300*6894.75729 #psi to Pa
+M0G = 0.08
+epsilonG = 0.0015
+c_starG = 1837.8 #m/s
+mdotG = 0.366 #kg/s
+
+geometriesG = [xG, radiusG, R_ctG]
+conditions_initialG = [T_wall0G, T0G, P0G, M0G]
+flow_propsG = [epsilonG, c_starG, mdotG]
+chem_propsG = [(12*MM_CO2)/MM_totalG, (13*MM_H2O)/MM_totalG, 0, 12/25, 13/25, 0, RsG]
+
+Grunt = Engine(geometriesG, conditions_initialG, flow_propsG, chem_propsG)
+
+results = Grunt.Run_Heat_Transfer()
 
 fig, axes = plt.subplots(3, 3, figsize=(12, 12), constrained_layout=True)  # 3 rows, 3 column
 
 results.to_csv('HeatTransferResults.csv')
+x = xG
+radius = radiusG
 # First Row
 # First subplot
 axes[0, 0].plot(x*1000, results["Mach Number"], color='red')
