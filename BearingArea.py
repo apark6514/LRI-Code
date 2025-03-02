@@ -71,10 +71,10 @@ def find_min_ring_thickness(x, r, th_Oring, x_Oring, MEOP):
     plt.show()
 
 def create_contour(contour):
-    contour = pd.read_csv(contour, names=[0, 1, 2])
+    contour = pd.read_csv(contour)
     print(contour)
-    x = contour[0] #in
-    r = contour[1] #in
+    x = contour['x'] #in
+    r = contour['y'] #in
     x -= x[0]
     x *= 25.4 #mm
     r *= 25.4 #mm
