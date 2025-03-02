@@ -22,7 +22,6 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import newton
 import matplotlib.pyplot as plt
-import time
 
 Ru = 8.31446261815324 #Universal gas constant (J/mol K)
 MM_CO2 = 0.044009 #Molar mass (kg/mol)
